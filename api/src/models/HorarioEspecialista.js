@@ -1,7 +1,7 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
-const EspecialistaEspecialidad = sequelize.define('EspecialistaEspecialidad', {
+const HorarioEspecialista = sequelize.define('HorarioEspecialista', {
     id: {
         type: DataTypes.INTEGER,
         primaryKey: true,
@@ -23,27 +23,28 @@ const EspecialistaEspecialidad = sequelize.define('EspecialistaEspecialidad', {
             key: 'id'
         }
     },
-    precio: {
-        type: DataTypes.DECIMAL(10, 2),
-        defaultValue: 0
+    dia_semana: {
+        type: DataTypes.ENUM('lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'),
+        allowNull: false
     },
-    duracion_minutos: {
-        type: DataTypes.INTEGER,
-        defaultValue: 60
+    hora_inicio: {
+        type: DataTypes.TIME,
+        allowNull: false
     },
-    horario_json: {
-        type: DataTypes.JSON,
-        defaultValue: {}
+    hora_fin: {
+        type: DataTypes.TIME,
+        allowNull: false
     },
     activo: {
         type: DataTypes.BOOLEAN,
         defaultValue: true
     }
 }, {
-    tableName: 'especialista_especialidad',
+    tableName: 'horarios_especialista',
     timestamps: true,
     createdAt: 'fecha_creacion',
     updatedAt: 'fecha_actualizacion'
 });
 
-module.exports = EspecialistaEspecialidad;
+module.exports = HorarioEspecialista;
+

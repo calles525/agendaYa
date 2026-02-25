@@ -1,4 +1,3 @@
-// src/models/ReservaCita.js
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
@@ -43,7 +42,22 @@ const ReservaCita = sequelize.define('ReservaCita', {
     }
 }, {
     tableName: 'reserva_citas',
-    timestamps: false
+    timestamps: false,
+    indexes: [
+        // Índices para búsquedas rápidas
+        {
+            name: 'idx_reserva_citas_especialista',
+            fields: ['especialista_id']
+        },
+        {
+            name: 'idx_reserva_citas_especialidad',
+            fields: ['especialidad_id']
+        },
+        {
+            name: 'idx_reserva_citas_reserva',
+            fields: ['reserva_id']
+        }
+    ]
 });
 
 module.exports = ReservaCita;

@@ -1,4 +1,3 @@
-// src/models/Especialidad.js
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
@@ -24,7 +23,8 @@ const Especialidad = sequelize.define('Especialidad', {
         type: DataTypes.TEXT
     },
     icono: {
-        type: DataTypes.STRING(50)
+        type: DataTypes.STRING(50),
+        defaultValue: '🔧'
     },
     activo: {
         type: DataTypes.BOOLEAN,

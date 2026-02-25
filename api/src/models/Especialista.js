@@ -1,4 +1,3 @@
-// src/models/Especialista.js
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 

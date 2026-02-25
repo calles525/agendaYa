@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { FiUser, FiMail, FiLock, FiPhone } from 'react-icons/fi'
+import toast from 'react-hot-toast'
 
 const Register = () => {
   const [formData, setFormData] = useState({
@@ -19,8 +20,41 @@ const Register = () => {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
-    // Aquí iría la lógica de registro
-    setLoading(false)
+
+    // Validaciones básicas
+    if (formData.password.length < 6) {
+      toast.error('La contraseña debe tener al menos 6 caracteres')
+      setLoading(false)
+      return
+    }
+
+    if (formData.rol === 'proveedor' && !formData.tipo_proveedor) {
+      toast.error('Selecciona el tipo de proveedor')
+      setLoading(false)
+      return
+    }
+
+    try {
+      // Llamar al servicio de registro
+      const result = await register(formData)
+      
+      if (result.success) {
+        toast.success('Registro exitoso!')
+        // Redirigir según el rol
+        if (formData.rol === 'cliente') {
+          navigate('/cliente/dashboard')
+        } else if (formData.rol === 'proveedor') {
+          navigate('/proveedor/dashboard')
+        } else {
+          navigate('/')
+        }
+      }
+    } catch (error) {
+      console.error('Error en registro:', error)
+      toast.error(error.response?.data?.error || 'Error al registrarse')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -90,13 +124,22 @@ const Register = () => {
                   required
                 />
               </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Mínimo 6 caracteres, una mayúscula y un número
+              </p>
             </div>
 
             <div>
               <label className="input-label">Tipo de cuenta</label>
               <select
                 value={formData.rol}
-                onChange={(e) => setFormData({...formData, rol: e.target.value})}
+                onChange={(e) => {
+                  setFormData({
+                    ...formData, 
+                    rol: e.target.value,
+                    tipo_proveedor: e.target.value === 'cliente' ? null : formData.tipo_proveedor
+                  })
+                }}
                 className="input-field"
               >
                 <option value="cliente">Cliente (quiero reservar)</option>
@@ -125,7 +168,15 @@ const Register = () => {
               disabled={loading}
               className="btn-primary w-full mt-6"
             >
-              {loading ? 'Creando cuenta...' : 'Registrarse'}
+              {loading ? (
+                <span className="flex items-center justify-center">
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Creando cuenta...
+                </span>
+              ) : 'Registrarse'}
             </button>
           </form>
 

@@ -1,4 +1,3 @@
-// src/models/ReservaAlquiler.js
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
@@ -40,8 +39,5 @@ const ReservaAlquiler = sequelize.define('ReservaAlquiler', {
     tableName: 'reserva_alquileres',
     timestamps: false
 });
-
-// Relaciones
-ReservaAlquiler.belongsTo(ProductoAlquiler, { foreignKey: 'producto_id', as: 'producto' });
 
 module.exports = ReservaAlquiler;

@@ -1,10 +1,84 @@
 // src/controllers/reservaController.js
-const { Reserva, Usuario, Proveedor, Especialista, ProductoAlquiler, HistorialCliente, Calificacion } = require('../models');
+const { Reserva, Usuario, Proveedor, Especialista, ProductoAlquiler, HistorialCliente, Calificacion, ReservaCita, ReservaAlquiler } = require('../models');
 const { Op } = require('sequelize');
-const telegramService = require('../config/telegram');
+const telegramService = require('../services/telegramService');
 const disponibilidadService = require('../services/disponibilidadService');
 
 const reservaController = {
+    // Obtener reservas pendientes del proveedor
+    async getReservasPendientes(req, res, next) {
+        try {
+            const proveedor = await Proveedor.findOne({
+                where: { usuario_id: req.usuario.id }
+            });
+
+            if (!proveedor) {
+                return res.status(404).json({ error: 'Proveedor no encontrado' });
+            }
+
+            const reservas = await Reserva.findAll({
+                where: {
+                    proveedor_id: proveedor.id,
+                    estado: 'pendiente'
+                },
+                include: [
+                    {
+                        model: Usuario,
+                        as: 'cliente',
+                        attributes: ['id', 'nombre', 'apellidos', 'email', 'telefono']
+                    }
+                ],
+                order: [['fecha_creacion', 'DESC']]
+            });
+
+            res.json(reservas);
+        } catch (error) {
+            next(error);
+        }
+    },
+
+    // Obtener historial de un cliente
+    async getHistorialCliente(req, res, next) {
+        try {
+            const { cliente_id } = req.params;
+            
+            const proveedor = await Proveedor.findOne({
+                where: { usuario_id: req.usuario.id }
+            });
+
+            if (!proveedor) {
+                return res.status(404).json({ error: 'Proveedor no encontrado' });
+            }
+
+            const historial = await HistorialCliente.findAll({
+                where: {
+                    cliente_id,
+                    proveedor_id: proveedor.id
+                },
+                include: [
+                    {
+                        model: Usuario,
+                        as: 'cliente',
+                        attributes: ['id', 'nombre', 'apellidos']
+                    },
+                    {
+                        model: Especialista,
+                        as: 'especialista'
+                    },
+                    {
+                        model: Reserva,
+                        as: 'reserva'
+                    }
+                ],
+                order: [['fecha_creacion', 'DESC']]
+            });
+
+            res.json(historial);
+        } catch (error) {
+            next(error);
+        }
+    },
+
     // Crear reserva de cita
     async crearReservaCita(req, res, next) {
         try {
@@ -37,6 +111,7 @@ const reservaController = {
             const horaFin = disponibilidadService.calcularHoraFin(hora_inicio, duracion);
 
             // Obtener precio
+            const EspecialistaEspecialidad = require('../models/EspecialistaEspecialidad');
             const especialistaEsp = await EspecialistaEspecialidad.findOne({
                 where: {
                     especialista_id,
@@ -67,7 +142,7 @@ const reservaController = {
             });
 
             // Enviar notificaciones
-            await this.enviarNotificacionesNuevaReserva(reserva);
+            await reservaController.enviarNotificacionesNuevaReserva(reserva);
 
             res.status(201).json({
                 message: 'Reserva creada exitosamente',
@@ -81,6 +156,7 @@ const reservaController = {
 
     // Crear reserva de alquiler
     async crearReservaAlquiler(req, res, next) {
+        const sequelize = require('../config/database').sequelize;
         const transaction = await sequelize.transaction();
 
         try {
@@ -120,7 +196,7 @@ const reservaController = {
                     throw new Error(`Producto ${producto.nombre} no disponible para las fechas seleccionadas`);
                 }
 
-                const subtotalItem = producto.precio_hora * duracion * item.cantidad;
+                const subtotalItem = parseFloat(producto.precio_hora) * duracion * item.cantidad;
                 subtotal += subtotalItem;
 
                 itemsReserva.push({
@@ -131,11 +207,11 @@ const reservaController = {
                 });
             }
 
-            // Calcular delivery (simplificado)
-            const costoDelivery = await disponibilidadService.calcularDelivery(
-                { latitud: latitud_entrega, longitud: longitud_entrega },
-                proveedor_id
-            );
+            // Calcular delivery
+            const costoDelivery = 50; // Valor fijo por ahora
+
+            // Calcular hora fin
+            const horaFin = disponibilidadService.calcularHoraFin(hora_inicio, duracion);
 
             // Crear reserva
             const reserva = await Reserva.create({
@@ -144,7 +220,7 @@ const reservaController = {
                 tipo: 'alquiler',
                 fecha_reserva: fecha,
                 hora_inicio,
-                hora_fin: disponibilidadService.calcularHoraFin(hora_inicio, duracion),
+                hora_fin: horaFin,
                 duracion_horas: duracion,
                 subtotal,
                 costo_delivery: costoDelivery,
@@ -166,7 +242,7 @@ const reservaController = {
             await transaction.commit();
 
             // Enviar notificaciones
-            await this.enviarNotificacionesNuevaReserva(reserva);
+            await reservaController.enviarNotificacionesNuevaReserva(reserva);
 
             res.status(201).json({
                 message: 'Reserva creada exitosamente',
@@ -179,7 +255,7 @@ const reservaController = {
         }
     },
 
-    // Obtener reservas del usuario
+    // Obtener mis reservas
     async getMisReservas(req, res, next) {
         try {
             const { estado, pagina = 1, limite = 10 } = req.query;
@@ -198,7 +274,11 @@ const reservaController = {
                     {
                         model: Proveedor,
                         as: 'proveedor',
-                        include: ['usuario']
+                        include: [{
+                            model: Usuario,
+                            as: 'usuario',
+                            attributes: ['id', 'nombre', 'foto_perfil']
+                        }]
                     }
                 ],
                 order: [['fecha_creacion', 'DESC']],
@@ -228,17 +308,16 @@ const reservaController = {
                     {
                         model: Usuario,
                         as: 'cliente',
-                        attributes: ['id', 'nombre', 'apellidos', 'email', 'telefono']
+                        attributes: ['id', 'nombre', 'apellidos', 'email', 'telefono', 'foto_perfil']
                     },
                     {
                         model: Proveedor,
                         as: 'proveedor',
-                        include: ['usuario']
-                    },
-                    {
-                        model: Calificacion,
-                        as: 'calificacion',
-                        required: false
+                        include: [{
+                            model: Usuario,
+                            as: 'usuario',
+                            attributes: ['id', 'nombre', 'foto_perfil']
+                        }]
                     }
                 ]
             });
@@ -247,22 +326,31 @@ const reservaController = {
                 return res.status(404).json({ error: 'Reserva no encontrada' });
             }
 
-            // Verificar permisos
-            if (reserva.cliente_id !== req.usuario.id && 
-                reserva.proveedor.usuario_id !== req.usuario.id &&
-                req.usuario.rol !== 'admin') {
-                return res.status(403).json({ error: 'No autorizado' });
-            }
-
             // Incluir detalles específicos según tipo
             if (reserva.tipo === 'cita') {
-                reserva.dataValues.detalles = await reserva.getReservaCita({
-                    include: ['especialidad', 'especialista']
+                const detalle = await ReservaCita.findOne({
+                    where: { reserva_id: reserva.id },
+                    include: [
+                        {
+                            model: require('../models/Especialidad'),
+                            as: 'especialidad'
+                        },
+                        {
+                            model: require('../models/Especialista'),
+                            as: 'especialista'
+                        }
+                    ]
                 });
+                reserva.dataValues.detalle = detalle;
             } else {
-                reserva.dataValues.detalles = await reserva.getReservaAlquileres({
-                    include: ['producto']
+                const detalles = await ReservaAlquiler.findAll({
+                    where: { reserva_id: reserva.id },
+                    include: [{
+                        model: ProductoAlquiler,
+                        as: 'producto'
+                    }]
                 });
+                reserva.dataValues.detalles = detalles;
             }
 
             res.json(reserva);
@@ -272,104 +360,26 @@ const reservaController = {
         }
     },
 
-    // Confirmar reserva (proveedor)
-    async confirmarReserva(req, res, next) {
-        try {
-            const { id } = req.params;
-            const reserva = await Reserva.findByPk(id, {
-                include: ['proveedor', 'cliente']
-            });
-
-            if (!reserva) {
-                return res.status(404).json({ error: 'Reserva no encontrada' });
-            }
-
-            // Verificar que el proveedor sea el dueño
-            if (reserva.proveedor.usuario_id !== req.usuario.id) {
-                return res.status(403).json({ error: 'No autorizado' });
-            }
-
-            if (reserva.estado !== 'pendiente') {
-                return res.status(400).json({ 
-                    error: `No se puede confirmar una reserva en estado ${reserva.estado}` 
-                });
-            }
-
-            await reserva.update({
-                estado: 'confirmada',
-                fecha_confirmacion: new Date()
-            });
-
-            // Notificar al cliente
-            // ... (implementar notificación)
-
-            res.json({
-                message: 'Reserva confirmada exitosamente',
-                reserva
-            });
-
-        } catch (error) {
-            next(error);
-        }
-    },
-
-    // Rechazar reserva (proveedor)
-    async rechazarReserva(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { motivo } = req.body;
-
-            const reserva = await Reserva.findByPk(id, {
-                include: ['proveedor']
-            });
-
-            if (!reserva) {
-                return res.status(404).json({ error: 'Reserva no encontrada' });
-            }
-
-            // Verificar que el proveedor sea el dueño
-            if (reserva.proveedor.usuario_id !== req.usuario.id) {
-                return res.status(403).json({ error: 'No autorizado' });
-            }
-
-            if (reserva.estado !== 'pendiente') {
-                return res.status(400).json({ 
-                    error: `No se puede rechazar una reserva en estado ${reserva.estado}` 
-                });
-            }
-
-            await reserva.update({
-                estado: 'rechazada',
-                motivo_cancelacion: motivo || 'Rechazada por el proveedor'
-            });
-
-            // Notificar al cliente
-            // ... (implementar notificación)
-
-            res.json({
-                message: 'Reserva rechazada',
-                reserva
-            });
-
-        } catch (error) {
-            next(error);
-        }
-    },
-
-    // Cancelar reserva (cliente)
+    // Cancelar reserva
     async cancelarReserva(req, res, next) {
         try {
             const { id } = req.params;
             const { motivo } = req.body;
 
-            const reserva = await Reserva.findByPk(id);
+            const reserva = await Reserva.findByPk(id, {
+                include: [{
+                    model: Proveedor,
+                    as: 'proveedor',
+                    include: ['usuario']
+                }]
+            });
 
             if (!reserva) {
                 return res.status(404).json({ error: 'Reserva no encontrada' });
             }
 
             // Verificar que el cliente sea el dueño
-            if (reserva.cliente_id !== req.usuario.id) {
+            if (reserva.cliente_id !== req.usuario.id && req.usuario.rol !== 'admin') {
                 return res.status(403).json({ error: 'No autorizado' });
             }
 
@@ -385,11 +395,11 @@ const reservaController = {
             });
 
             // Notificar al proveedor
-            const proveedor = await Proveedor.findByPk(reserva.proveedor_id);
-            if (proveedor?.telegram_chat_id) {
+            if (reserva.proveedor?.telegram_chat_id) {
+                const cliente = await Usuario.findByPk(reserva.cliente_id);
                 await telegramService.sendMessage(
-                    proveedor.telegram_chat_id,
-                    telegramService.formatCancellationMessage(reserva, req.usuario)
+                    reserva.proveedor.telegram_chat_id,
+                    telegramService.formatCancellationMessage(reserva, cliente)
                 );
             }
 
@@ -403,14 +413,17 @@ const reservaController = {
         }
     },
 
-    // Completar reserva (proveedor)
-    async completarReserva(req, res, next) {
+    // Confirmar reserva
+    async confirmarReserva(req, res, next) {
         try {
             const { id } = req.params;
-            const { notas } = req.body;
 
             const reserva = await Reserva.findByPk(id, {
-                include: ['proveedor']
+                include: [{
+                    model: Proveedor,
+                    as: 'proveedor',
+                    include: ['usuario']
+                }]
             });
 
             if (!reserva) {
@@ -418,7 +431,95 @@ const reservaController = {
             }
 
             // Verificar que el proveedor sea el dueño
-            if (reserva.proveedor.usuario_id !== req.usuario.id) {
+            if (reserva.proveedor.usuario_id !== req.usuario.id && req.usuario.rol !== 'admin') {
+                return res.status(403).json({ error: 'No autorizado' });
+            }
+
+            if (reserva.estado !== 'pendiente') {
+                return res.status(400).json({ 
+                    error: `No se puede confirmar una reserva en estado ${reserva.estado}` 
+                });
+            }
+
+            await reserva.update({
+                estado: 'confirmada',
+                fecha_confirmacion: new Date()
+            });
+
+            res.json({
+                message: 'Reserva confirmada exitosamente',
+                reserva
+            });
+
+        } catch (error) {
+            next(error);
+        }
+    },
+
+    // Rechazar reserva
+    async rechazarReserva(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { motivo } = req.body;
+
+            const reserva = await Reserva.findByPk(id, {
+                include: [{
+                    model: Proveedor,
+                    as: 'proveedor',
+                    include: ['usuario']
+                }]
+            });
+
+            if (!reserva) {
+                return res.status(404).json({ error: 'Reserva no encontrada' });
+            }
+
+            // Verificar que el proveedor sea el dueño
+            if (reserva.proveedor.usuario_id !== req.usuario.id && req.usuario.rol !== 'admin') {
+                return res.status(403).json({ error: 'No autorizado' });
+            }
+
+            if (reserva.estado !== 'pendiente') {
+                return res.status(400).json({ 
+                    error: `No se puede rechazar una reserva en estado ${reserva.estado}` 
+                });
+            }
+
+            await reserva.update({
+                estado: 'rechazada',
+                motivo_cancelacion: motivo || 'Rechazada por el proveedor'
+            });
+
+            res.json({
+                message: 'Reserva rechazada',
+                reserva
+            });
+
+        } catch (error) {
+            next(error);
+        }
+    },
+
+    // Completar reserva
+    async completarReserva(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { notas } = req.body;
+
+            const reserva = await Reserva.findByPk(id, {
+                include: [{
+                    model: Proveedor,
+                    as: 'proveedor',
+                    include: ['usuario']
+                }]
+            });
+
+            if (!reserva) {
+                return res.status(404).json({ error: 'Reserva no encontrada' });
+            }
+
+            // Verificar que el proveedor sea el dueño
+            if (reserva.proveedor.usuario_id !== req.usuario.id && req.usuario.rol !== 'admin') {
                 return res.status(403).json({ error: 'No autorizado' });
             }
 
@@ -444,21 +545,25 @@ const reservaController = {
         }
     },
 
-    // Agregar notas al historial del cliente
+    // Agregar notas al historial
     async agregarNotasHistorial(req, res, next) {
         try {
             const { reserva_id, notas, archivos } = req.body;
 
             const reserva = await Reserva.findByPk(reserva_id, {
-                include: ['proveedor']
+                include: [{
+                    model: Proveedor,
+                    as: 'proveedor',
+                    include: ['usuario']
+                }]
             });
 
             if (!reserva) {
                 return res.status(404).json({ error: 'Reserva no encontrada' });
             }
 
-            // Verificar permisos
-            if (reserva.proveedor.usuario_id !== req.usuario.id) {
+            // Verificar que el proveedor sea el dueño
+            if (reserva.proveedor.usuario_id !== req.usuario.id && req.usuario.rol !== 'admin') {
                 return res.status(403).json({ error: 'No autorizado' });
             }
 
@@ -536,21 +641,18 @@ const reservaController = {
     async enviarNotificacionesNuevaReserva(reserva) {
         try {
             const proveedor = await Proveedor.findByPk(reserva.proveedor_id, {
-                include: ['usuario']
+                include: [{
+                    model: Usuario,
+                    as: 'usuario'
+                }]
             });
 
             const cliente = await Usuario.findByPk(reserva.cliente_id);
 
             // Notificación por Telegram
-            if (proveedor.telegram_chat_id && proveedor.notificaciones_telegram) {
-                await telegramService.sendMessage(
-                    proveedor.telegram_chat_id,
-                    telegramService.formatReservationMessage(reserva, reserva.tipo, cliente)
-                );
+            if (proveedor?.telegram_chat_id && proveedor.notificaciones_telegram) {
+                await telegramService.notificarNuevaReserva(reserva, cliente, proveedor);
             }
-
-            // Aquí podrías agregar notificación por email
-            // ...
 
         } catch (error) {
             console.error('Error enviando notificaciones:', error);
