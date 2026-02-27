@@ -1,0 +1,428 @@
+// AgendaYa - SaaS Multi-Tenant Schema
+// Plataforma de gestión de citas y servicios
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum UserRole {
+  SUPER_ADMIN    // Administrador de la plataforma
+  BUSINESS_OWNER // Dueño de negocio
+  SPECIALIST     // Especialista/profesional
+  CLIENT         // Cliente final
+}
+
+enum AppointmentStatus {
+  PENDING        // Cita solicitada, sin pago
+  PAYMENT_PENDING // Comprobante subido, pendiente validación
+  CONFIRMED      // Pago validado, cita confirmada
+  COMPLETED      // Atención completada
+  CANCELLED      // Cancelada por cliente o negocio
+  REJECTED       // Rechazada por el negocio
+  EXPIRED        // Expiró sin confirmar
+}
+
+enum PaymentStatus {
+  PENDING    // Pendiente de subir comprobante
+  UPLOADED   // Comprobante subido, pendiente validación
+  VALIDATED  // Pago validado
+  REJECTED   // Pago rechazado
+}
+
+enum SubscriptionPlan {
+  FREE       // Plan gratuito (1 especialista)
+  BASIC      // Plan básico (hasta 5 especialistas)
+  PRO        // Plan profesional (hasta 15 especialistas)
+  ENTERPRISE // Plan enterprise (ilimitado)
+}
+
+enum SubscriptionStatus {
+  ACTIVE     // Suscripción activa
+  PAST_DUE   // Pago vencido
+  CANCELLED  // Cancelada
+  TRIAL      // Período de prueba
+}
+
+// ==================== USUARIOS Y AUTENTICACIÓN ====================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   // Hash bcrypt
+  name      String
+  phone     String?
+  avatar    String?  // URL de imagen
+  role      UserRole @default(CLIENT)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  ownedBusinesses   Business[]        @relation("BusinessOwner")
+  specialistProfile Specialist?
+  clientAppointments Appointment[]    @relation("ClientAppointments")
+  paymentsValidated Payment[]         @relation("PaymentsValidated")
+
+  @@index([email])
+  @@index([role])
+}
+
+// ==================== CATÁLOGOS ====================
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  icon        String?  // Nombre del icono (lucide)
+  color       String?  // Color para UI
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  businesses Business[]
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+// ==================== NEGOCIO (TENANT) ====================
+
+model Business {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  description   String?
+  logo          String?  // URL del logo
+  coverImage    String?  // URL imagen de portada
+  
+  // Información de contacto
+  phone         String?
+  email         String?
+  website       String?
+  
+  // Ubicación
+  address       String?
+  city          String?
+  state         String?
+  country       String?
+  zipCode       String?
+  
+  // Configuración
+  currency      String   @default("USD")
+  timezone      String   @default("America/Mexico_City")
+  
+  // Propietario
+  ownerId       String
+  owner         User     @relation("BusinessOwner", fields: [ownerId], references: [id])
+  
+  // Categoría
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id])
+  
+  // Estado
+  isActive      Boolean  @default(true)
+  isVerified    Boolean  @default(false) // Verificado por Super Admin
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relaciones
+  subscription     Subscription?
+  specialties      Specialty[]
+  specialists      Specialist[]
+  services         Service[]
+  appointments     Appointment[]
+  paymentMethods   PaymentMethod[]
+
+  @@index([slug])
+  @@index([categoryId])
+  @@index([isActive])
+}
+
+// ==================== SUSCRIPCIÓN ====================
+
+model Subscription {
+  id              String             @id @default(cuid())
+  businessId      String             @unique
+  business        Business           @relation(fields: [businessId], references: [id])
+  
+  plan            SubscriptionPlan   @default(FREE)
+  status          SubscriptionStatus @default(TRIAL)
+  
+  // Límites según plan
+  maxSpecialists  Int                @default(1)
+  
+  // Período de facturación
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  
+  // Monto (en centavos para evitar decimales)
+  amount          Int?
+  currency        String             @default("USD")
+  
+  // Trial
+  trialEndsAt     DateTime?
+  
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([businessId])
+  @@index([status])
+}
+
+// ==================== ESPECIALIDADES DEL NEGOCIO ====================
+
+model Specialty {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  
+  name        String
+  description String?
+  color       String?  // Color para UI
+  isActive    Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  specialists Specialist[]
+  services    Service[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+// ==================== ESPECIALISTAS ====================
+
+model Specialist {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id])
+  
+  specialtyId String
+  specialty   Specialty @relation(fields: [specialtyId], references: [id])
+  
+  // Información profesional
+  title       String?  // Dr., Lic., etc.
+  bio         String?
+  photo       String?  // URL de foto
+  
+  // Estado
+  isActive    Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  schedules     Schedule[]
+  appointments  Appointment[]
+
+  @@index([businessId])
+  @@index([userId])
+}
+
+// ==================== HORARIOS ====================
+
+model Schedule {
+  id            String    @id @default(cuid())
+  specialistId  String
+  specialist    Specialist @relation(fields: [specialistId], references: [id])
+  
+  // Día de la semana (0 = Domingo, 1 = Lunes, ..., 6 = Sábado)
+  dayOfWeek     Int
+  
+  // Horario
+  startTime     String    // Formato HH:mm
+  endTime       String    // Formato HH:mm
+  
+  // Pausa/Almuerzo
+  breakStart    String?   // Formato HH:mm
+  breakEnd      String?   // Formato HH:mm
+  
+  isActive      Boolean   @default(true)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([specialistId, dayOfWeek])
+  @@index([specialistId])
+}
+
+// ==================== SERVICIOS ====================
+
+model Service {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  
+  specialtyId String?
+  specialty   Specialty? @relation(fields: [specialtyId], references: [id])
+  
+  name        String
+  description String?
+  
+  // Duración en minutos
+  duration    Int      @default(30)
+  
+  // Precio (en centavos para evitar decimales)
+  price       Int
+  
+  // Imagen del servicio
+  image       String?
+  
+  // Estado
+  isActive    Boolean  @default(true)
+  
+  // Orden para mostrar
+  sortOrder   Int      @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  appointments Appointment[]
+
+  @@index([businessId])
+  @@index([specialtyId])
+}
+
+// ==================== MÉTODOS DE PAGO DEL NEGOCIO ====================
+
+model PaymentMethod {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  
+  name        String   // Ej: "Transferencia Bancaria", "Efectivo"
+  type        String   // BANK_TRANSFER, CASH, CARD, etc.
+  
+  // Detalles (JSON string)
+  // Ej: {"bank": "BBVA", "account": "1234567890", "holder": "Juan Perez"}
+  details     String?
+  
+  instructions String? // Instrucciones para el cliente
+  
+  isActive    Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  payments    Payment[]
+
+  @@index([businessId])
+}
+
+// ==================== CITAS ====================
+
+model Appointment {
+  id            String             @id @default(cuid())
+  businessId    String
+  business      Business           @relation(fields: [businessId], references: [id])
+  
+  clientId      String
+  client        User               @relation("ClientAppointments", fields: [clientId], references: [id])
+  
+  specialistId  String
+  specialist    Specialist         @relation(fields: [specialistId], references: [id])
+  
+  serviceId     String
+  service       Service            @relation(fields: [serviceId], references: [id])
+  
+  // Fecha y hora
+  date          DateTime           // Fecha de la cita
+  time          String             // Hora inicio HH:mm
+  endTime       String?            // Hora fin calculada
+  
+  // Estado
+  status        AppointmentStatus  @default(PENDING)
+  
+  // Notas
+  clientNotes   String?            // Notas del cliente al reservar
+  businessNotes String?            // Notas internas del negocio
+  cancellationReason String?       // Razón de cancelación
+  
+  // Historial de atención
+  attendedAt    DateTime?          // Cuándo se atendió
+  attendanceNotes String?          // Notas del especialista
+  
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  // Relaciones
+  payment       Payment?
+
+  @@index([businessId])
+  @@index([clientId])
+  @@index([specialistId])
+  @@index([status])
+  @@index([date])
+}
+
+// ==================== PAGOS ====================
+
+model Payment {
+  id              String        @id @default(cuid())
+  appointmentId   String        @unique
+  appointment     Appointment   @relation(fields: [appointmentId], references: [id])
+  
+  // Método de pago usado
+  methodId        String?
+  paymentMethod   PaymentMethod? @relation(fields: [methodId], references: [id])
+  
+  // Monto (en centavos)
+  amount          Int
+  
+  // Estado del pago
+  status          PaymentStatus @default(PENDING)
+  
+  // Comprobante
+  reference       String?       // Número de referencia/operación
+  receiptImage    String?       // URL de la imagen del comprobante
+  
+  // Validación
+  validatedAt     DateTime?
+  validatedById   String?
+  validatedBy     User?         @relation("PaymentsValidated", fields: [validatedById], references: [id])
+  
+  rejectionReason String?
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([status])
+  @@index([appointmentId])
+}
+
+// ==================== AUDITORÍA (Opcional para futuro) ====================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String   // CREATE, UPDATE, DELETE
+  entity      String   // Modelo afectado
+  entityId    String?
+  oldData     String?  // JSON
+  newData     String?  // JSON
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+}
